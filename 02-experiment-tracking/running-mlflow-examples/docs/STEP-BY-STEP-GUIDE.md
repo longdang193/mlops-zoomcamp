@@ -1,18 +1,54 @@
+## Two Setup Options
+
+### Option 1: Local Disk Storage (Simpler, Lower Cost)
+
 ```
 [LOCAL] Preparation
        │
        ▼
 [LOCAL] setup-azure-resources.sh  →  [Azure Cloud Resources Created]
+       │                               • PostgreSQL + Database
+       │                               • VM + Network
        │
        ▼
 [LOCAL] SSH  →  [VM]
        │
        ▼
 [VM] setup-mlflow-server.sh  →  [MLflow Server Running]
+       │                         • Backend: PostgreSQL
+       │                         • Artifacts: Local disk on VM
        │
        ▼
 [LOCAL / Notebook] Connect to MLflow via http://<VM_IP>:5000
 ```
+
+**Best for:** Learning, small teams, limited artifacts
+
+### Option 2: Azure Blob Storage (Scalable, Production-Ready)
+
+```
+[LOCAL] Preparation
+       │
+       ▼
+[LOCAL] setup-azure-resources-blob.sh  →  [Azure Cloud Resources Created]
+       │                                    • PostgreSQL + Database
+       │                                    • Storage Account + Blob Container
+       │                                    • VM + Network
+       │
+       ▼
+[LOCAL] SSH  →  [VM]
+       │
+       ▼
+[VM] setup-mlflow-server-blob.sh  →  [MLflow Server Running]
+       │                               • Backend: PostgreSQL
+       │                               • Artifacts: Azure Blob Storage (wasbs://)
+       │
+       ▼
+[LOCAL / Notebook] Connect to MLflow via http://<VM_IP>:5000
+                    Configure .env with Storage Account credentials
+```
+
+**Best for:** Production, teams, large artifacts, scalability
 
 ## Pre-flight & Preparation Phase
 
@@ -32,15 +68,31 @@ You need the following three tools:
 * **SSH Client & Key Pair**: Required to remotely access the Ubuntu VM.
 	* **Key Check**: Ensure you have `~/.ssh/id_rsa` (private) and `~/.ssh/id_rsa.pub` (public). The Azure CLI handles key usage and generation for you.
 
+### Choosing Between Options
+
+| Factor | Option 1: Local Disk | Option 2: Blob Storage |
+| :--- | :--- | :--- |
+| **Cost** | ~$20-25/month | ~$50-65/month |
+| **Setup Complexity** | Simpler (fewer resources) | More complex (Storage Account setup) |
+| **Artifact Persistence** | Tied to VM lifecycle | Independent of VM |
+| **Scalability** | Limited by VM disk | Unlimited capacity |
+| **Team Collaboration** | Artifacts only when VM running | Artifacts always accessible |
+| **Use Case** | Learning, development, small teams | Production, large teams, enterprise |
+| **Client Configuration** | No special setup needed | Requires `.env` with Storage credentials |
+
 ### Key Context & Best Practices
 
 | Context | Clarification | Action Context |
 | :--- | :--- | :--- |
 | **Command Context** | **Crucial:** Pay close attention to whether the command should be run on your **Local Machine (`[LOCAL]`)** to interact with Azure, or **Inside the VM (`[VM]`)** to configure the software. | `[LOCAL]` vs. `[VM]` tags are non-negotiable. |
-| **Credentials** | **Save Immediately:** The PostgreSQL password, VM Public IP, and PostgreSQL Hostname are generated only once and are needed for steps 3, 5, and 7. | Treat these details as sensitive and critical. |
+| **Credentials** | **Save Immediately:** The PostgreSQL password, VM Public IP, and PostgreSQL Hostname are generated only once and are needed for steps 3, 5, and 7. <br> **Option 2 only:** Also save **Storage Account Name** and **Storage Account Key**. | Treat these details as sensitive and critical. The Storage Account Key (Option 2) is especially important for artifact storage. |
 | **Port Priority** | Port **5000** for MLflow is opened with priority **1010**. This is a deliberate choice to ensure it doesn't conflict with or supersede standard ports like SSH (usually around 1000). | This ensures both remote management and MLflow access function correctly. |
+| **Artifact Storage - Option 1** | **Local Disk:** Artifacts are stored on the VM's local disk at `/home/azureuser/mlruns-artifacts`. No special client configuration needed. | Artifacts accessible only when VM is running. Lost if VM is deleted. |
+| **Artifact Storage - Option 2** | **Azure Blob Storage:** Artifacts are stored in Azure Blob Storage using `wasbs://` URIs. Requires Storage Account Key for authentication. | The `.env` file must contain `AZURE_STORAGE_ACCOUNT` and `AZURE_STORAGE_KEY` for client-side artifact uploads. Artifacts persist independently of VM. |
 
 ## Step 1 - Verify Prerequisites
+
+**Option 1: Local Disk**
 
 ```
 [LOCAL]
@@ -56,6 +108,27 @@ Azure Cloud
    ├─► Resource Group: rg-mlflow
    ├─► PostgreSQL Server: pg-mlflow-XXXX.postgres.database.azure.com
    └─► VM: vm-mlflow (Ubuntu)
+```
+
+**Option 2: Blob Storage**
+
+```
+[LOCAL]
+   │
+   ├─► Run setup-azure-resources-blob.sh
+   │      • Creates Azure Resource Group
+   │      • Creates PostgreSQL Flexible Server + DB
+   │      • Creates Storage Account + Blob Container
+   │      • Creates Ubuntu VM
+   │      • Opens Port 5000 (priority 1010)
+   │
+   ▼
+Azure Cloud
+   ├─► Resource Group: rg-mlflow-blob
+   ├─► PostgreSQL Server: pg-mlflow-XXXX.postgres.database.azure.com
+   ├─► Storage Account: stmlflowXXXXX
+   ├─► Blob Container: mlflow-artifacts
+   └─► VM: vm-mlflow-blob (Ubuntu)
 ```
 
 ### Check Azure CLI Installation
@@ -96,14 +169,15 @@ az account set --subscription "Your Subscription Name"
 cd /workspaces/mlops-zoomcamp/02-experiment-tracking/running-mlflow-examples
 ```
 
+### Option 1: Local Disk Storage
+
 **`[LOCAL]`** Run the setup script:
 
 ```bash
 ./setup-azure-resources.sh
 ```
 
-### Script Actions
-
+**Script Actions:**
 * Prompts for PostgreSQL password (min 8 characters)
 * Creates:
 	* Resource group: `rg-mlflow`
@@ -112,22 +186,57 @@ cd /workspaces/mlops-zoomcamp/02-experiment-tracking/running-mlflow-examples
 	* Ubuntu VM (D2s_v3)
 	* Opens port 5000 (priority 1010)
 
-### Save Output
+**Save Output - Option 1:**
+* **PostgreSQL:**
+	* Hostname: `pg-mlflow-XXXX.postgres.database.azure.com`
+	* Username: `mlflow`
+	* Password: your chosen password
+	* Database: `mlflow`
+* **VM:**
+	* VM public IP (e.g., `52.187.41.215`)
 
-You’ll need:
+### Option 2: Blob Storage
 
-* VM public IP (e.g., `52.187.41.215`)
-* PostgreSQL hostname (e.g., `pg-mlflow-1234.postgres.database.azure.com`)
-* Username: `mlflow`
-* Password: your chosen password
-* Database: `mlflow`
-
-**Expected time:** ~5-10 minutes
-
-If the database isn’t created:
+**`[LOCAL]`** Run the setup script:
 
 ```bash
+./setup-azure-resources-blob.sh
+```
+
+**Script Actions:**
+* Prompts for PostgreSQL password (min 8 characters)
+* Creates:
+	* Resource group: `rg-mlflow-blob`
+	* PostgreSQL Flexible Server (B1ms)
+	* PostgreSQL database: `mlflow`
+	* Azure Storage Account (Standard_LRS)
+	* Blob Container: `mlflow-artifacts`
+	* Ubuntu VM (D2s_v3)
+	* Opens port 5000 (priority 1010)
+
+**Save Output - Option 2:**
+* **PostgreSQL:**
+	* Hostname: `pg-mlflow-XXXX.postgres.database.azure.com`
+	* Username: `mlflow`
+	* Password: your chosen password
+	* Database: `mlflow`
+* **Azure Storage:**
+	* Storage Account Name: `stmlflowXXXXX` (e.g., `stmlflow2026445`)
+	* Storage Account Key: `xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` (long alphanumeric string)
+	* Container Name: `mlflow-artifacts`
+* **VM:**
+	* VM public IP (e.g., `4.193.251.239`)
+
+**Expected time:** ~5-10 minutes (both options)
+
+**If the database isn't created:**
+
+```bash
+# Option 1
 az postgres flexible-server db create --resource-group rg-mlflow --server-name <SERVER_NAME> --database-name mlflow
+
+# Option 2
+az postgres flexible-server db create --resource-group rg-mlflow-blob --server-name <SERVER_NAME> --database-name mlflow
 ```
 
 ## Step 3 - Connect to the VM via SSH
@@ -153,76 +262,84 @@ ssh azureuser@52.187.41.215
 
 If you get `"Permission denied (publickey)"`, add your SSH key:
 
+**Option 1:**
+
 ```bash
 az vm user update --resource-group rg-mlflow --name vm-mlflow --username azureuser --ssh-key-value "$(cat ~/.ssh/id_rsa.pub)"
+```
+
+**Option 2:**
+
+```bash
+az vm user update --resource-group rg-mlflow-blob --name vm-mlflow-blob --username azureuser --ssh-key-value "$(cat ~/.ssh/id_rsa.pub)"
 ```
 
 Wait 30-60 seconds, then try SSH again.
 
 Once connected, your prompt should look like:
 
-```
-azureuser@vm-mlflow:~$
-```
+**Option 1:** `azureuser@vm-mlflow:~$`
+**Option 2:** `azureuser@vm-mlflow-blob:~$`
 
 ## Step 4 - Transfer MLflow Setup Script to VM
 
-This step bridges the gap between the infrastructure creation (done by the first script on your local machine) and the software installation (done by the second script *inside* the VM). You need to move the file **`setup-mlflow-server.sh`** from your computer to the newly created Azure VM.
+This step bridges the gap between the infrastructure creation (done by the first script on your local machine) and the software installation (done by the second script *inside* the VM).
 
-```
-┌──────────────────────────────┐
-│  Local Machine [LOCAL]       │
-│  scp setup-mlflow-server.sh  │
-└──────────────┬───────────────┘
-               │ (File Transfer via SCP)
-               ▼
-┌──────────────────────────────┐
-│  Azure VM [VM]               │
-│  chmod +x setup-mlflow-server.sh │
-│  ./setup-mlflow-server.sh         │
-└──────────────────────────────┘
-```
+**Option 1:** Transfer **`setup-mlflow-server.sh`**
+**Option 2:** Transfer **`setup-mlflow-server-blob.sh`**
 
 ### Option A - File Transfer Method: SCP (Recommended)
 
 - **SCP (Secure Copy Protocol)** is the standard, secure way to transfer files between two machines over an SSH connection.
 - Keep your SSH session open. Open a new terminal window for file transfer.
 
-| Command Context | Command | Purpose and Rationale |
-| :-------------- | :------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`[LOCAL]`** | `scp setup-mlflow-server.sh azureuser@<VM_PUBLIC_IP>:~/` | **Transfer:** This command copies the local file (`setup-mlflow-server.sh`) to the remote VM. <br> - It uses your **SSH credentials** (key pair) for secure authentication. <br> - `azureuser` is the admin username on the VM. <br> - `~/` specifies the file should be placed in the home directory of `azureuser`. |
-| **`[VM]`** | `ls -la setup-mlflow-server.sh` | **Verification:** After the transfer, you run this *inside the VM* to confirm the file has arrived and check its permissions (list details, including size and ownership). |
-| **`[VM]`** | `chmod +x setup-mlflow-server.sh` | **Permission:** This is **critical**. It changes the file's mode to **make it executable**. Without the `+x` (execute) permission, the shell cannot run the script, and you would receive a "Permission denied" error when trying to run `./setup-mlflow-server.sh`. |
-
 **`[LOCAL]`** In a NEW terminal window (keep SSH session open), transfer the script:
+
+**Option 1:**
 
 ```bash
 cd /workspaces/mlops-zoomcamp/02-experiment-tracking/running-mlflow-examples
 scp setup-mlflow-server.sh azureuser@<VM_PUBLIC_IP>:~/
 ```
 
-Example:
+**Option 2:**
 
 ```bash
-scp setup-mlflow-server.sh azureuser@52.187.41.215:~/`
+cd /workspaces/mlops-zoomcamp/02-experiment-tracking/running-mlflow-examples
+scp setup-mlflow-server-blob.sh azureuser@<VM_PUBLIC_IP>:~/
 ```
 
-**`[VM]`** Back in your SSH session, verify the script arrived:
+**`[VM]`** Back in your SSH session, verify the script arrived and make it executable:
+
+**Option 1:**
 
 ```bash
 ls -la setup-mlflow-server.sh
 chmod +x setup-mlflow-server.sh
 ```
 
+**Option 2:**
+
+```bash
+ls -la setup-mlflow-server-blob.sh
+chmod +x setup-mlflow-server-blob.sh
+```
+
 ### Option B - Manual Copy
 
 This option is used if `scp` is unavailable or if you prefer a simpler text transfer.
 
-| Command Context | Command | Purpose and Rationale |
-| :--- | :--- | :--- |
-| **`[LOCAL]`** | `cat setup-mlflow-server.sh` | **Display:** This command prints the entire contents of the script file to your local terminal screen. |
-| **`[VM]`** | `nano setup-mlflow-server.sh` | **Creation:** You open the `nano` text editor *inside the VM* to create a new file with the same name. You then manually **paste** the contents displayed by the `cat` command. |
-| **`[VM]`** | `chmod +x setup-mlflow-server.sh` | **Permission:** Just as with SCP, this final step is necessary to enable the script to be run in **Step 5**. |
+**`[LOCAL]`** Display the script:
+- **Option 1:** `cat setup-mlflow-server.sh`
+- **Option 2:** `cat setup-mlflow-server-blob.sh`
+
+**`[VM]`** Create the file in `nano` and paste the contents:
+- **Option 1:** `nano setup-mlflow-server.sh`
+- **Option 2:** `nano setup-mlflow-server-blob.sh`
+
+**`[VM]`** Make it executable:
+- **Option 1:** `chmod +x setup-mlflow-server.sh`
+- **Option 2:** `chmod +x setup-mlflow-server-blob.sh`
 
 ## Step 5 - Run MLflow Setup on the VM
 
@@ -234,32 +351,70 @@ This is the execution phase where you run the configuration script inside the Vi
 
 **Action:** Execute the script **inside the VM (`[VM]`)**:
 
+**Option 1:**
+
 ```bash
 ./setup-mlflow-server.sh
 ```
 
-The script will immediately pause and prompt you for the details needed to build the complete connection URI for the database:
+**Option 2:**
+
+```bash
+./setup-mlflow-server-blob.sh
+```
+
+### Input Requirements
+
+**Both Options - PostgreSQL Configuration:**
 
 | Input Field | Source of Value | Purpose |
 | :--- | :--- | :--- |
-| **PostgreSQL host** | Saved from **Step 2** output | The public address of the Azure Database. |
+| **PostgreSQL host** | Saved from **Step 2** output | The public address of the Azure Database (e.g., `pg-mlflow-1234.postgres.database.azure.com`). |
 | **PostgreSQL user** | `mlflow` (Default) | The administrator username for the database. |
 | **Password** | Saved from **Step 2** input | The password for the `mlflow` user (hidden for security). |
 | **Database** | `mlflow` (Default) | The name of the specific database MLflow will use for metadata. |
+
+**Option 2 Only - Azure Blob Storage Configuration:**
+
+| Input Field | Source of Value | Purpose |
+| :--- | :--- | :--- |
+| **Storage Account Name** | Saved from **Step 2** output | The name of the Azure Storage Account (e.g., `stmlflow2026445`). |
+| **Storage Account Key** | Saved from **Step 2** output | The access key for the Storage Account (hidden for security). This is the long alphanumeric string displayed by the setup script. |
+| **Blob Container Name** | `mlflow-artifacts` (Default) | The name of the blob container where artifacts will be stored. |
 
 ### What the Script Performs
 
 Once the inputs are gathered, the script executes the following essential tasks, ensuring the VM is ready to run the MLflow service:
 
+**Both Options - Common Tasks:**
 * **System and Python Prep:** It first completes the system preparation, which involves:
 	* Updating system packages.
 	* Installing **Python 3**, **pip**, and the **PostgreSQL client (`psql`)**.
 	* Installing the Python packages: **`mlflow`** (the server) and **`psycopg2-binary`** (the database driver).
-* **Startup Script Creation:** It generates the executable file `~/start-mlflow-server.sh`. This script contains the permanent MLflow server command, using your provided inputs to construct the final, secure **Backend URI**.
-	* It hardcodes crucial flags like `--allowed-hosts "*"` to prevent the common **"Invalid Host header"** error when accessing the UI via the VM's public IP.
-	* It sets **`--default-artifact-root mlflow-artifacts:/`** to enable HTTP artifact proxying and prevent permission errors when logging artifacts.
-	* It sets the access point to **Port 5000**.
-* **Connection Sanity Check:** It performs a critical pre-flight test. It uses the installed **PostgreSQL client (`psql`)** and your credentials to attempt a simple query against the Azure database.
+* **Connection Sanity Check:** It performs a critical pre-flight test using `psql` to verify PostgreSQL database connectivity.
+
+**Option 1 - Local Disk Specific:**
+* **Startup Script Creation:** It generates the executable file `~/start-mlflow-server.sh`. This script:
+	* Starts MLflow server with `--backend-store-uri` pointing to PostgreSQL.
+	* Uses `--default-artifact-root mlflow-artifacts:/` for HTTP artifact proxying.
+	* Sets `--artifacts-destination /home/azureuser/mlruns-artifacts` for local disk storage.
+	* Sets `--allowed-hosts "*"` to prevent the common **"Invalid Host header"** error.
+	* Sets the access point to **Port 5000**.
+
+**Option 2 - Blob Storage Specific:**
+* **Additional Package:** Installs **`azure-storage-blob`** (for Azure Blob Storage access).
+* **Environment Configuration:** It creates `~/.mlflow-env` file with:
+	* PostgreSQL backend store URI (for metadata storage).
+	* Azure Storage connection string (for authenticating with Blob Storage).
+	* MLflow default artifact root using `wasbs://` URI format (e.g., `wasbs://mlflow-artifacts@stmlflow2026445.blob.core.windows.net/`).
+	* Host configuration for remote access.
+* **Startup Script Creation:** It generates the executable file `~/start-mlflow-server-blob.sh`. This script:
+	* Sources the environment variables from `~/.mlflow-env`.
+	* Starts MLflow server with `--backend-store-uri` pointing to PostgreSQL.
+	* Uses `--default-artifact-root` with the `wasbs://` URI for Azure Blob Storage.
+	* Sets `--allowed-hosts "*"` to prevent the common **"Invalid Host header"** error.
+	* Sets the access point to **Port 5000**.
+* **Additional Connection Check:** Uses Python `azure-storage-blob` SDK to verify Azure Blob Storage container access and permissions.
 
 ### Troubleshooting the Connection Failure
 
@@ -279,20 +434,76 @@ The final sanity check is the most likely point of failure. If the script report
 
 **Run Inside the VM (`[VM]`)**
 
-* **Action**: Use `nohup ~/start-mlflow-server.sh > mlflow-server.log 2>&1 &` to run the server **in the background** and keep it running even after you disconnect your SSH session.
+**Option 1:**
+
+```bash
+nohup ~/start-mlflow-server.sh > mlflow-server.log 2>&1 &
+```
+
+**Option 2:**
+
+```bash
+nohup ~/start-mlflow-server-blob.sh > mlflow-server.log 2>&1 &
+```
+
+This runs the server **in the background** and keeps it running even after you disconnect your SSH session.
+
 * **Verification**: Check the server status with `curl http://localhost:5000/health` (expected output: `{"status":"ok"}`).
+
+**Configuration Summary:**
+
+**Option 1:**
+- Store metadata in PostgreSQL
+- Store artifacts on VM local disk (`/home/azureuser/mlruns-artifacts`)
+- Artifacts accessible via HTTP proxy when VM is running
+- Accept connections from any host (for remote access)
+
+**Option 2:**
+- Store metadata in PostgreSQL
+- Store artifacts in Azure Blob Storage (using `wasbs://` URIs)
+- Artifacts persist independently of VM
+- Accept connections from any host (for remote access)
 
 ## Step 7 & 8: Connect and Access
 
 These steps confirm **external connectivity** from your local environment to the running MLflow service on the Azure VM.
 
-### Step 7: Connect from a Data Science Notebook
+### Step 7: Configure Local Environment and Connect from Notebook
 
 This demonstrates how a **remote MLflow client** (like a Jupyter notebook on your local machine) connects to the Tracking Server.
 
-* **Setup**: In your Python environment, you define the public address of the server.
-* **Action**: `mlflow.set_tracking_uri(f"http://{TRACKING_SERVER_HOST}:5000")` sets the destination for all experiment logs.
-* **Verification**: `mlflow.search_experiments()` attempts to query the list of experiments from the server, confirming that the client can communicate through your local network, the internet, and the Azure NSG firewall.
+**Option 1 - Local Disk (No special configuration needed):**
+* Simply set the tracking URI in your notebook:
+
+	```python
+	mlflow.set_tracking_uri("http://<VM_PUBLIC_IP>:5000")
+	```
+
+* Artifacts are uploaded via HTTP proxy to the VM's local disk
+* No `.env` file or Storage Account credentials needed
+
+**Option 2 - Blob Storage (Requires `.env` configuration):**
+
+**`[LOCAL]`** Configure the `.env` file:
+
+1. Copy the template:
+
+	```bash
+	cd /workspaces/mlops-zoomcamp/02-experiment-tracking/running-mlflow-examples
+	cp env.template .env
+	```
+
+2. Edit `.env` and fill in:
+	- `MLFLOW_TRACKING_URI=http://<VM_PUBLIC_IP>:5000` - Your VM's IP address
+	- `AZURE_STORAGE_ACCOUNT=<STORAGE_ACCOUNT_NAME>` - From Step 2 output
+	- `AZURE_STORAGE_KEY=<STORAGE_ACCOUNT_KEY>` - From Step 2 output
+
+**Notebook Connection (Option 2):**
+* The notebook (`scenario-3-azure.ipynb`) will automatically load these values from `.env`
+* It constructs the Azure Storage connection string from the account name and key
+* `mlflow.set_tracking_uri()` sets the destination for all experiment logs
+* Artifacts are automatically uploaded to Azure Blob Storage using the connection string
+* **Verification**: `mlflow.search_experiments()` confirms connectivity to the server and PostgreSQL
 
 ### Step 8: Access MLflow UI (Browser)
 
@@ -311,10 +522,13 @@ This provides the direct user interface access. This action is performed on your
 | **DB connection fails** | DB missing or wrong credentials | Create DB manually, verify password |
 | **UI connection refused** | Server not running / port closed | Check with `ps aux` and Azure port 5000 |
 | **Invalid Host header** | Missing host flag | Ensure `--allowed-hosts "*"` in startup script |
-| **Setup script stops early** | Empty hostname or connection fail | Run with `bash -x ./setup-mlflow-server.sh` |
-| **PermissionError: [Errno 13] Permission denied: '/home/azureuser'** | Incorrect MLflow server config | See "Artifact Upload Issues" section below ⚠️ |
+| **Setup script stops early** | Empty hostname or connection fail | **Option 1:** Run with `bash -x ./setup-mlflow-server.sh` <br> **Option 2:** Run with `bash -x ./setup-mlflow-server-blob.sh` |
+| **AuthorizationPermissionMismatch** (Option 2 only) | Missing or incorrect Storage Account credentials | Set `AZURE_STORAGE_ACCOUNT` and `AZURE_STORAGE_KEY` in `.env` file |
+| **ModuleNotFoundError: azure** (Option 2 only) | Missing Azure packages in notebook environment | Run the "Install Azure Packages" cell in the notebook |
 
-### Artifact Upload Issues
+### Artifact Storage Issues
+
+#### Option 1 - Local Disk Issues
 
 **Symptom:** When trying to log artifacts or models, you get:
 
@@ -397,6 +611,52 @@ curl -s http://localhost:5000/health
 
 **Verification:** Create a new experiment and test artifact upload. You should see artifact URIs like `mlflow-artifacts:/` instead of `/home/azureuser/`.
 
+#### Option 2 - Blob Storage Issues
+
+**Symptom:** When trying to log artifacts or models, you get:
+
+```
+HttpResponseError: This request is not authorized to perform this operation using this permission.
+```
+
+**Root Cause:** The client cannot authenticate with Azure Blob Storage. This happens when:
+- The `AZURE_STORAGE_CONNECTION_STRING` environment variable is not set
+- The Storage Account Key in `.env` is incorrect or missing
+- The notebook hasn't loaded the `.env` file properly
+
+**The Fix:** Ensure your `.env` file contains the correct Storage Account credentials:
+
+1. Verify the `.env` file exists and has the correct format:
+
+	```bash
+	MLFLOW_TRACKING_URI=http://<VM_IP>:5000
+	AZURE_STORAGE_ACCOUNT=stmlflow2026445
+	AZURE_STORAGE_KEY=your_actual_storage_key_here
+	```
+
+2. The notebook automatically builds the connection string from these fields in the "Configure Azure Storage" cell.
+3. If using connection string directly, uncomment and use:
+
+	```bash
+	AZURE_STORAGE_CONNECTION_STRING=DefaultEndpointsProtocol=https;AccountName=stmlflow2026445;AccountKey=YOUR_KEY;EndpointSuffix=core.windows.net
+	```
+
+**Verification:** After running the "Configure Azure Storage" cell, you should see:
+
+```
+✓ Azure Storage configured (Account: stmlflow2026445)
+```
+
+**Artifact Storage with `wasbs://` URIs:**
+
+The MLflow server is configured to use Azure Blob Storage via `wasbs://` URIs. When you log artifacts, you should see URIs like:
+
+```
+wasbs://mlflow-artifacts@stmlflow2026445.blob.core.windows.net/1/run_id/artifacts
+```
+
+This means artifacts are stored directly in Azure Blob Storage, not on the VM's local disk, and persist independently of the VM.
+
 ### PostgreSQL Access
 
 Ensure firewall allows all IPs and credentials are correct.
@@ -405,47 +665,122 @@ Ensure firewall allows all IPs and credentials are correct.
 
 Check status in Azure Portal, verify credits, or restart:
 
+**Option 1:**
+
 ```bash
 az vm restart -g rg-mlflow -n vm-mlflow
+```
+
+**Option 2:**
+
+```bash
+az vm restart -g rg-mlflow-blob -n vm-mlflow-blob
 ```
 
 ## Manage Costs
 
 Stop VM when not in use:
 
+**Option 1:**
+
 ```bash
 az vm deallocate -g rg-mlflow -n vm-mlflow
 ```
 
+**Option 2:**
+
+```bash
+az vm deallocate -g rg-mlflow-blob -n vm-mlflow-blob
+```
+
+**⚠️ Important - Option 1:** When the VM is deallocated, artifacts on local disk are **not accessible** until the VM is restarted. Artifacts remain on disk but cannot be accessed.
+
+**⚠️ Important - Option 2:** When the VM is deallocated, artifacts in Blob Storage **remain accessible** because they're stored independently of the VM.
+
 Restart later:
+
+**Option 1:**
 
 ```bash
 az vm start -g rg-mlflow -n vm-mlflow
 ```
 
+**Option 2:**
+
+```bash
+az vm start -g rg-mlflow-blob -n vm-mlflow-blob
+```
+
 Check new IP (it may change):
+
+**Option 1:**
 
 ```bash
 az vm show -g rg-mlflow -n vm-mlflow --show-details --query publicIps -o tsv
 ```
 
+**Option 2:**
+
+```bash
+az vm show -g rg-mlflow-blob -n vm-mlflow-blob --show-details --query publicIps -o tsv
+```
+
+**Important:** If the VM IP changes:
+- **Option 1:** Update `mlflow.set_tracking_uri()` in your notebook
+- **Option 2:** Update `MLFLOW_TRACKING_URI` in your `.env` file
+
 Delete resources when finished:
+
+**Option 1:**
 
 ```bash
 az group delete -n rg-mlflow --yes --no-wait
 ```
 
-> The MLflow server won’t auto-start after VM restart. Run again:
+This deletes:
+
+- PostgreSQL server and database
+- VM and network resources
+- **⚠️ All artifacts on VM local disk (lost permanently)**
+
+**Option 2:**
+
+```bash
+az group delete -n rg-mlflow-blob --yes --no-wait
+```
+
+This deletes:
+
+- PostgreSQL server and database
+- Storage Account and all blobs (artifacts will be lost)
+- VM and network resources
+
+> The MLflow server won't auto-start after VM restart. Run again:
+
+**Option 1:**
 
 ```bash
 nohup ~/start-mlflow-server.sh > mlflow-server.log 2>&1 &
 ```
 
-## Next Steps
+**Option 2:**
 
-After successful setup:
+```bash
+nohup ~/start-mlflow-server-blob.sh > mlflow-server.log 2>&1 &
+```
 
-1. Train and log models with MLflow
-2. Register models in the Model Registry
-3. Monitor experiments in the MLflow UI
-4. Deallocate or delete the VM when idle to save costs
+## Summary: When to Use Each Option
+
+**Choose Option 1 (Local Disk) if:**
+- You're learning or experimenting
+- Budget is limited (~$20-25/month)
+- Artifacts are small (< 10 GB total)
+- You don't need artifacts when VM is stopped
+- Simple setup is preferred
+
+**Choose Option 2 (Blob Storage) if:**
+- Production environment or team collaboration
+- Need persistent artifact storage
+- Large artifacts or many models (> 10 GB)
+- Artifacts must be accessible even when VM is stopped
+- Scalability is important
